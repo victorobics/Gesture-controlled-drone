@@ -7,38 +7,46 @@ import time
 
 # --- Setup MediaPipe ---
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
-
-# Added Face Detection for the "Follow" mode when no hands are visible
+hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7, min_tracking_confidence=0.5)
 mp_face = mp.solutions.face_detection
 face_detection = mp_face.FaceDetection(model_selection=0, min_detection_confidence=0.5)
 
 # --- MAVLink Connection ---
-# serial0 is the RPi Zero's UART. 57600 is standard for MAVLink
+# serial0 es el alias para el UART de la RPi Zero 2 W (GPIO 14/15)
 try:
     master = mavutil.mavlink_connection('/dev/serial0', baud=57600)
+    master.wait_heartbeat() # Espera a confirmar conexión con el dron
     print("Link to DarwinFPV F411: ACTIVE")
-except:
-    print("Running in Simulation/No Serial Mode")
+except Exception as e:
+    print(f"Serial Error: {e}. Running in Simulation Mode")
+    master = None
 
-def get_follow_command(face_center_x, frame_width):
-    """
-    Calculate Yaw/Roll to keep the person in the center of the frame.
-    Simple P-controller logic (Proportional).
-    """
-    center_threshold = 0.15 # 15% margin
-    error = (face_center_x / frame_width) - 0.5
-    
-    if abs(error) > center_threshold:
-        if error > 0: return "YAW_RIGHT"
-        else: return "YAW_LEFT"
-    return "STABILIZED_FOLLOW"
+def send_nav_command(command, p7_val=0):
+    """Envía comandos de navegación (Takeoff/Land) via MAVLink"""
+    if master:
+        master.mav.command_long_send(
+            master.target_system, master.target_component,
+            command, 0, 0, 0, 0, 0, 0, 0, p7_val
+        )
+
+def count_fingers(hand_landmarks):
+    """Lógica para detectar cuántos dedos están levantados (Botones Virtuales)"""
+    tips = [8, 12, 16, 20] # Índices de las puntas de los dedos
+    count = 0
+    # Pulgar (basado en coordenada X para mano derecha/izquierda)
+    if hand_landmarks.landmark[4].x > hand_landmarks.landmark[3].x: count += 1
+    # Otros 4 dedos (basado en coordenada Y: punta más alta que el nudillo)
+    for tip in tips:
+        if hand_landmarks.landmark[tip].y < hand_landmarks.landmark[tip-2].y:
+            count += 1
+    return count
 
 def main():
     cap = cv2.VideoCapture(0)
-    # RPi Camera resolution should be low to keep FPS high on Pi Zero
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+
+    print("--- SYSTEM READY: STAND BY ---")
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -47,27 +55,40 @@ def main():
         frame = cv2.flip(frame, 1)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # 1. Try to find HANDS first (Manual Control)
+        # 1. Prioridad: GESTOS (CONTROL MANUAL)
         hand_results = hands.process(rgb_frame)
         
         if hand_results.multi_hand_landmarks:
-            # Gesture logic here (Thumb Up, Palm, etc.)
-            print("Control Mode: GESTURE_ACTIVE")
+            for hand_lms in hand_results.multi_hand_landmarks:
+                fingers = count_fingers(hand_lms)
+                
+                if fingers == 5: # PALMA ABIERTA = BOTÓN DESPEGAR
+                    print("GESTURE: OPEN PALM -> TAKING OFF")
+                    if master:
+                        master.arducopter_arm() # Armar motores
+                        send_nav_command(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, p7_val=1.2)
+                
+                elif fingers == 0: # PUÑO CERRADO = BOTÓN ATERRIZAR
+                    print("GESTURE: FIST -> LANDING")
+                    send_nav_command(mavutil.mavlink.MAV_CMD_NAV_LAND)
+        
         else:
-            # 2. If no hands, try to find FACE (Auto-Follow Mode)
+            # 2. Si no hay manos: SEGUIMIENTO DE CARA (AUTO-FOLLOW)
             face_results = face_detection.process(rgb_frame)
             if face_results.detections:
-                for detection in face_results.detections:
-                    bbox = detection.location_data.relative_bounding_box
+                for det in face_results.detections:
+                    bbox = det.location_data.relative_bounding_box
                     center_x = bbox.xmin + (bbox.width / 2)
-                    command = get_follow_command(center_x, 1.0)
-                    print(f"Control Mode: AUTO_FOLLOW -> {command}")
+                    
+                    # Lógica simple de centrado (Yaw)
+                    if center_x < 0.4: print("AUTO_FOLLOW: ROTATE LEFT")
+                    elif center_x > 0.6: print("AUTO_FOLLOW: ROTATE RIGHT")
+                    else: print("AUTO_FOLLOW: TARGET CENTERED")
             else:
-                # 3. Last resort: Safety Hover
-                print("Control Mode: FAILSAFE_HOVER")
+                # 3. Sin objetivos: MODO SEGURO (HOVER)
+                print("MODE: SAFE HOVER (Stabilizing)")
 
-        # Don't overload the CPU, 20fps is plenty for a 3-inch drone
-        time.sleep(0.05)
+        time.sleep(0.05) # Evita sobrecalentamiento de la RPi Zero 2
 
     cap.release()
 
