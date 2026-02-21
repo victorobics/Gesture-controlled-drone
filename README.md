@@ -1,9 +1,8 @@
-markdown
 # AI Gesture-Controlled CineWhoop (3-inch)
 
 This project implements a compact, autonomous drone that replaces traditional RC controllers with real-time hand gesture recognition and human-following capabilities using **MediaPipe** and a **Raspberry Pi Zero 2 W**.
 
-## 🚀 Technical Stack
+##  Technical Stack
 *   **Vision System:** Raspberry Pi Zero 2 W + Camera Module 3 Wide (120° FOV).
 *   **AI Framework:** Python 3.9 + MediaPipe (Optimized Lite) for 21-point hand landmark tracking.
 *   **Positioning:** Optical Flow + Lidar Sensor (Matek 3901-L0X) for precise indoor hovering (Position Hold) without GPS.
@@ -11,7 +10,7 @@ This project implements a compact, autonomous drone that replaces traditional RC
 *   **Communication:** MAVLink protocol via UART (GPIO 14/15) for real-time command injection.
 *   **Chassis:** Cloud-149 V2 ducted frame for maximum indoor safety and human proximity.
 
-## 💰 Materials and Budget (BOM)
+##  Materials and Budget (BOM)
 
 
 | Item | Model | Price (USD) | Price (EUR approx.) |
@@ -31,7 +30,7 @@ This project implements a compact, autonomous drone that replaces traditional RC
 
 *Note: The remaining budget (~36€) is reserved for shipping costs, soldering materials, and emergency spares.*
 
-## 🔌 System Connections (Diagram)
+##  System Connections (Diagram)
 
 ```text
       [ Camera Module 3 Wide ]
